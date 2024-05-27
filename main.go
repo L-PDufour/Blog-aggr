@@ -2,9 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -31,6 +29,26 @@ type User struct {
 
 var ErrNoAuthHeaderIncluded = errors.New("no auth header included in request")
 
+type Feed struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Name      string    `json:"name"`
+	Url       string    `json:"url"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
+func databaseFeedToFeed(feed database.Feed) Feed {
+	return Feed{
+		ID:        feed.ID,
+		CreatedAt: feed.CreatedAt,
+		UpdatedAt: feed.UpdatedAt,
+		Name:      feed.Name,
+		Url:       feed.Url,
+		UserID:    feed.UserID,
+	}
+}
+
 func databaseUserToUser(user database.User) User {
 	return User{
 		ID:        user.ID,
@@ -43,7 +61,6 @@ func databaseUserToUser(user database.User) User {
 
 func GetApiToken(headers http.Header) (string, error) {
 	authHeader := headers.Get("Authorization")
-	fmt.Println(authHeader)
 	if authHeader == "" {
 		return "", ErrNoAuthHeaderIncluded
 	}
@@ -55,50 +72,24 @@ func GetApiToken(headers http.Header) (string, error) {
 	return splitAuth[1], nil
 }
 
-func (cfg *apiConfig) handlerGetUsers(w http.ResponseWriter, r *http.Request) {
-	apiKey, err := GetApiToken(r.Header)
-	fmt.Println(apiKey)
-	if err != nil {
-		respondWithERROR(w, http.StatusUnauthorized, "Couldn't find api key")
-		return
+type authedHandler func(http.ResponseWriter, *http.Request, database.User)
+
+func (cfg *apiConfig) middlewareAuth(handler authedHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiKey, err := GetApiToken(r.Header)
+		if err != nil {
+			respondWithERROR(w, http.StatusUnauthorized, "Couldn't find api key")
+			return
+		}
+
+		user, err := cfg.DB.GetUserByApiKey(r.Context(), apiKey)
+		if err != nil {
+			respondWithERROR(w, http.StatusNotFound, "Couldn't get user")
+			return
+		}
+
+		handler(w, r, user)
 	}
-
-	user, err := cfg.DB.GetUserByApiKey(r.Context(), apiKey)
-	if err != nil {
-		respondWithERROR(w, http.StatusNotFound, "Couldn't get user")
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, databaseUserToUser(user))
-
-}
-
-func (cfg *apiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Name string
-	}
-	decoder := json.NewDecoder(r.Body)
-	defer r.Body.Close()
-
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		respondWithERROR(w, http.StatusInternalServerError, "Couldn't decode parameters")
-		return
-	}
-
-	user, err := cfg.DB.CreateUser(r.Context(), database.CreateUserParams{
-		ID:        uuid.New(),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		Name:      params.Name,
-	})
-
-	if err != nil {
-		respondWithERROR(w, http.StatusInternalServerError, "Couldn't create user")
-	}
-	respondWithJSON(w, http.StatusCreated, databaseUserToUser(user))
-
 }
 
 func main() {
@@ -120,11 +111,17 @@ func main() {
 	cfg := &apiConfig{
 		DB: dbQueries,
 	}
+
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /v1/users", cfg.handlerPostUsers)
+	mux.HandleFunc("GET /v1/users", cfg.middlewareAuth(cfg.handlerGetUsers))
+
+	mux.HandleFunc("POST /v1/feeds", cfg.middlewareAuth(cfg.handlerPostFeeds))
+	mux.HandleFunc("GET /v1/feeds", cfg.handlerGetFeeds)
+
 	mux.HandleFunc("GET /v1/healthz", handlerReadiness)
 	mux.HandleFunc("GET /v1/err", handlerError)
-	mux.HandleFunc("POST /v1/users", cfg.handlerPostUsers)
-	mux.HandleFunc("GET /v1/users", cfg.handlerGetUsers)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -132,6 +129,4 @@ func main() {
 	}
 	log.Printf("Serving on port: %s\n", port)
 	log.Fatal(srv.ListenAndServe())
-
-	// Print the PORT environment variable
 }
