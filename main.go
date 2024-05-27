@@ -3,9 +3,12 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/L-PDufour/Blog-aggr/internal/database"
@@ -23,7 +26,10 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Name      string    `json:"name"`
+	ApiKey    string    `json:"api_key"`
 }
+
+var ErrNoAuthHeaderIncluded = errors.New("no auth header included in request")
 
 func databaseUserToUser(user database.User) User {
 	return User{
@@ -31,15 +37,45 @@ func databaseUserToUser(user database.User) User {
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Name:      user.Name,
+		ApiKey:    user.ApiKey,
 	}
+}
+
+func GetApiToken(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	fmt.Println(authHeader)
+	if authHeader == "" {
+		return "", ErrNoAuthHeaderIncluded
+	}
+	splitAuth := strings.Split(authHeader, " ")
+	if len(splitAuth) < 2 || splitAuth[0] != "ApiKey" {
+		return "", errors.New("malformed authorization header")
+	}
+
+	return splitAuth[1], nil
+}
+
+func (cfg *apiConfig) handlerGetUsers(w http.ResponseWriter, r *http.Request) {
+	apiKey, err := GetApiToken(r.Header)
+	fmt.Println(apiKey)
+	if err != nil {
+		respondWithERROR(w, http.StatusUnauthorized, "Couldn't find api key")
+		return
+	}
+
+	user, err := cfg.DB.GetUserByApiKey(r.Context(), apiKey)
+	if err != nil {
+		respondWithERROR(w, http.StatusNotFound, "Couldn't get user")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, databaseUserToUser(user))
+
 }
 
 func (cfg *apiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Name string `json:"name"`
-	}
-	type response struct {
-		User
+		Name string
 	}
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
@@ -88,6 +124,7 @@ func main() {
 	mux.HandleFunc("GET /v1/healthz", handlerReadiness)
 	mux.HandleFunc("GET /v1/err", handlerError)
 	mux.HandleFunc("POST /v1/users", cfg.handlerPostUsers)
+	mux.HandleFunc("GET /v1/users", cfg.handlerGetUsers)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
