@@ -19,6 +19,14 @@ type apiConfig struct {
 	DB *database.Queries
 }
 
+type FeedFollow struct {
+	ID        uuid.UUID `json:"id"`
+	FeedID    uuid.UUID `json:"feed_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type User struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
@@ -38,6 +46,23 @@ type Feed struct {
 	UserID    uuid.UUID `json:"user_id"`
 }
 
+func databaseFeedFollowsToFeedFollows(feedFollows []database.FeedFollow) []FeedFollow {
+	result := make([]FeedFollow, len(feedFollows))
+	for i, feedFollow := range feedFollows {
+		result[i] = databaseFeedFollowToFeedFollow(feedFollow)
+	}
+	return result
+}
+
+func databaseFeedFollowToFeedFollow(feedFollow database.FeedFollow) FeedFollow {
+	return FeedFollow{
+		ID:        feedFollow.ID,
+		FeedID:    feedFollow.FeedID,
+		UserID:    feedFollow.UserID,
+		CreatedAt: feedFollow.CreatedAt,
+		UpdatedAt: feedFollow.UpdatedAt,
+	}
+}
 func databaseFeedToFeed(feed database.Feed) Feed {
 	return Feed{
 		ID:        feed.ID,
@@ -119,6 +144,10 @@ func main() {
 
 	mux.HandleFunc("POST /v1/feeds", cfg.middlewareAuth(cfg.handlerPostFeeds))
 	mux.HandleFunc("GET /v1/feeds", cfg.handlerGetFeeds)
+
+	mux.HandleFunc("POST /v1/feed_follows", cfg.middlewareAuth(cfg.handlerPostFeedFollows))
+	mux.HandleFunc("DELETE /v1/feed_follows/{feedFollowID}", cfg.middlewareAuth(cfg.handlerDeleteFeedFollows))
+	mux.HandleFunc("GET /v1/feed_follows", cfg.middlewareAuth(cfg.handlerFeedFollowsGet))
 
 	mux.HandleFunc("GET /v1/healthz", handlerReadiness)
 	mux.HandleFunc("GET /v1/err", handlerError)
