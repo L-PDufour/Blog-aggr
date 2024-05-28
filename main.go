@@ -38,12 +38,20 @@ type User struct {
 var ErrNoAuthHeaderIncluded = errors.New("no auth header included in request")
 
 type Feed struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Name      string    `json:"name"`
-	Url       string    `json:"url"`
-	UserID    uuid.UUID `json:"user_id"`
+	ID            uuid.UUID  `json:"id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	Name          string     `json:"name"`
+	Url           string     `json:"url"`
+	UserID        uuid.UUID  `json:"user_id"`
+	LastFetchedAt *time.Time `json:"last_fetched_at"`
+}
+
+func convertNullTimeToTimePtr(nt sql.NullTime) *time.Time {
+	if nt.Valid {
+		return &nt.Time
+	}
+	return nil
 }
 
 func databaseFeedFollowsToFeedFollows(feedFollows []database.FeedFollow) []FeedFollow {
@@ -65,12 +73,13 @@ func databaseFeedFollowToFeedFollow(feedFollow database.FeedFollow) FeedFollow {
 }
 func databaseFeedToFeed(feed database.Feed) Feed {
 	return Feed{
-		ID:        feed.ID,
-		CreatedAt: feed.CreatedAt,
-		UpdatedAt: feed.UpdatedAt,
-		Name:      feed.Name,
-		Url:       feed.Url,
-		UserID:    feed.UserID,
+		ID:            feed.ID,
+		CreatedAt:     feed.CreatedAt,
+		UpdatedAt:     feed.UpdatedAt,
+		Name:          feed.Name,
+		Url:           feed.Url,
+		UserID:        feed.UserID,
+		LastFetchedAt: convertNullTimeToTimePtr(feed.LastFetchedAt),
 	}
 }
 
@@ -156,6 +165,10 @@ func main() {
 		Addr:    ":" + port,
 		Handler: mux,
 	}
+	const collectionConcurrency = 10
+	const collectionInterval = time.Minute
+	go startScraping(dbQueries, collectionConcurrency, collectionInterval)
+
 	log.Printf("Serving on port: %s\n", port)
 	log.Fatal(srv.ListenAndServe())
 }
