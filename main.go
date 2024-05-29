@@ -35,6 +35,17 @@ type User struct {
 	ApiKey    string    `json:"api_key"`
 }
 
+type Post struct {
+	ID          uuid.UUID      `json:"id"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	Title       string         `json:"title"`
+	Url         string         `json:"url"`
+	Description sql.NullString `json:"description"`
+	PublishedAt sql.NullTime   `json:"published_at"`
+	FeedID      uuid.UUID      `json:"feed_id"`
+}
+
 var ErrNoAuthHeaderIncluded = errors.New("no auth header included in request")
 
 type Feed struct {
@@ -91,6 +102,28 @@ func databaseUserToUser(user database.User) User {
 		Name:      user.Name,
 		ApiKey:    user.ApiKey,
 	}
+}
+
+func databasePostToPost(post database.Post) Post {
+
+	return Post{
+		ID:          post.ID,
+		CreatedAt:   post.CreatedAt,
+		UpdatedAt:   post.UpdatedAt,
+		Title:       post.Title,
+		Url:         post.Url,
+		Description: post.Description,
+		PublishedAt: post.PublishedAt,
+		FeedID:      post.FeedID,
+	}
+}
+
+func databasePostsToPosts(posts []database.Post) []Post {
+	result := make([]Post, len(posts))
+	for i, dbPost := range posts {
+		result[i] = databasePostToPost(dbPost)
+	}
+	return result
 }
 
 func GetApiToken(headers http.Header) (string, error) {
@@ -153,6 +186,8 @@ func main() {
 
 	mux.HandleFunc("POST /v1/feeds", cfg.middlewareAuth(cfg.handlerPostFeeds))
 	mux.HandleFunc("GET /v1/feeds", cfg.handlerGetFeeds)
+
+	mux.HandleFunc("GET /v1/posts", cfg.middlewareAuth(cfg.handlerPostPost))
 
 	mux.HandleFunc("POST /v1/feed_follows", cfg.middlewareAuth(cfg.handlerPostFeedFollows))
 	mux.HandleFunc("DELETE /v1/feed_follows/{feedFollowID}", cfg.middlewareAuth(cfg.handlerDeleteFeedFollows))

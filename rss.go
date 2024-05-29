@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/L-PDufour/Blog-aggr/internal/database"
+	"github.com/google/uuid"
 )
 
 type RSS struct {
@@ -86,20 +89,55 @@ func startScraping(db *database.Queries, concurrency int, timeBetweenRequest tim
 func scrapeFeed(db *database.Queries, wg *sync.WaitGroup, feed database.Feed) {
 	defer wg.Done()
 
+	// Mark feed as fetched
 	_, err := db.MarkFeedFetched(context.Background(), feed.ID)
 	if err != nil {
 		log.Printf("Couldn't mark feed %s fetched: %v", feed.Name, err)
 		return
 	}
 
+	// Fetch RSS feed
 	feedData, err := fetchRSS(feed.Url)
 	if err != nil {
 		log.Printf("Couldn't collect feed %s: %v", feed.Name, err)
 		return
 	}
 
+	// Insert or update posts
 	for _, item := range feedData.Channel.Items {
-		log.Println("Found post", item.Title)
+		// Parse published_at time
+
+		publishedAt := sql.NullTime{}
+		if t, err := time.Parse(time.RFC1123Z, item.PubDate); err == nil {
+			publishedAt = sql.NullTime{
+				Time:  t,
+				Valid: true,
+			}
+		} // Attempt to create the post
+		_, err = db.CreatePost(context.Background(), database.CreatePostParams{
+			ID:        uuid.New(),
+			CreatedAt: time.Time{},
+			UpdatedAt: time.Time{},
+			Title:     item.Title,
+			Url:       item.Link,
+			Description: sql.NullString{
+				String: item.Description,
+				Valid:  true,
+			},
+			PublishedAt: publishedAt,
+			FeedID:      feed.ID,
+		})
+
+		// If the error indicates a duplicate URL, ignore it
+		if err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
+			log.Printf("Post '%s' with URL '%s' already exists, skipping", item.Title, item.Link)
+			continue
+		}
+
+		// Log other errors
+		if err != nil {
+			log.Printf("Failed to insert post '%s': %v", item.Title, err)
+		}
 	}
 
 	log.Printf("Feed %s collected, %v posts found", feed.Name, len(feedData.Channel.Items))
